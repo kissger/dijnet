@@ -1,6 +1,5 @@
 import mechanicalsoup
 import traceback
-import argparse
 import os
 from util import *
 
@@ -12,7 +11,7 @@ class Dijnet():
     def login(self):
         self.browser.open('https://www.dijnet.hu/ekonto/control/nyitolap')
         self.browser.select_form('form[action="/ekonto/login/login_check_password"]')
-        auth = load_config('.dijnet')
+        auth = load_config('.dijnet', 'AUTH')
         self.browser['username'] = auth['username']
         self.browser['password'] = auth['password']
         self.browser.submit_selected()
@@ -77,9 +76,5 @@ def main(args):
         dijnet.logout()
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(prog='python3 dijnet.py')
-    parser.add_argument('-f', '--from', help='datum -tol, pl.: "2021.01.01"', dest='datefrom')
-    parser.add_argument('-t', '--to', help='datum -ig, pl.: "2021.01.31"', dest='dateto')
-    parser.add_argument('-d', '--download', help='celmappa letolteshez', dest='downloadpath')
-    args = parser.parse_args()
+    args = create_argparser(__file__).parse_args()
     main(args)
