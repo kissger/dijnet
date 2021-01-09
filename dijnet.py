@@ -1,70 +1,85 @@
 import mechanicalsoup
 import traceback
-import sys
+import argparse
 import os
+from util import *
 
-browser = mechanicalsoup.StatefulBrowser(soup_config={'features': 'lxml'}, user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 11_1_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36')
+class Dijnet():
+    def __init__(self, args):
+        self.browser = mechanicalsoup.StatefulBrowser(soup_config={'features': 'lxml'}, user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 11_1_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36')
+        self.args = args
 
-def login():
-    browser.open('https://www.dijnet.hu/ekonto/control/nyitolap')
-    browser.select_form('form[action="/ekonto/login/login_check_password"]')
-    browser['username'] = ''
-    browser['password'] = ''
-    browser.submit_selected()
+    def login(self):
+        self.browser.open('https://www.dijnet.hu/ekonto/control/nyitolap')
+        self.browser.select_form('form[action="/ekonto/login/login_check_password"]')
+        auth = load_config('.dijnet')
+        self.browser['username'] = auth['username']
+        self.browser['password'] = auth['password']
+        self.browser.submit_selected()
 
-def logout():
-    browser.open('https://www.dijnet.hu/ekonto/control/logout')
-    browser.close()
+    def logout(self):
+        self.browser.open('https://www.dijnet.hu/ekonto/control/logout')
+        self.browser.close()
 
-def escapeFt(text):
-    text = text.replace('Ft', '')
-    text = text.replace('*', '')
-    text = ''.join(text.split())
-    return text
+    def escapeFt(self, text):
+        return ''.join(text.replace('Ft', '').replace('*', '').split())
 
-def parse_row(tr):
-    td = tr.find_all('td')
-    print(';'.join([escapeFt(t.text) if 'Ft' in t.text else t.text for t in td]))
+    def parse_row(self, tr):
+        td = tr.find_all('td')
+        return ';'.join([self.escapeFt(t.text) if 'Ft' in t.text else t.text for t in td])
 
-def download_invoice(index, target_dir):
-    url = 'https://www.dijnet.hu/ekonto/control/szamla_select?vfw_coll=szamla_list&vfw_rowid={}&exp=K'.format(index)
-    browser.open(url)
-    browser.open('https://www.dijnet.hu/ekonto/control/szamla_letolt')
-    page = browser.get_current_page()
-    links = page.find('div', class_='xt_link_cell__download')
-    for link in links:
-        if 'Hiteles számla' in link:
-            download_link = browser.find_link(link_text=link)
-    if download_link:
-        data = browser.session.get(browser.absolute_url(download_link['href']))
-        header = data.headers['Content-Disposition']
-        fname = header.split(';')[1].split('=')[1]
-        print('Downloading file: '.format(fname))
-        with open(os.path.join(target_dir, fname), "wb") as f:
-            f.write(data.content)
-    
-    browser.follow_link(page.select('a.xt_link__title')[0])
+    def download_invoice(self, index):
+        downloaded = []
+        if not self.args.downloadpath:
+            return downloaded
 
-def list_invoices(download=True):
-    browser.follow_link(link_text=u'Számlakeresés')
-    browser.select_form(nr=0)
-    if len(sys.argv) >= 3:
-        browser['datumtol'] = sys.argv[2]
-    if len(sys.argv) == 4:
-        browser['datumig'] = sys.argv[3]
-    browser.submit_selected()
-    results = browser.get_current_page().find('table', class_='szamla_table').find_all('tr')
-    index = 0
-    for r in results:
-        parse_row(r)
-        if download:
-            download_szamla(index, sys.argv[1])
-        index = index + 1
+        url = 'https://www.dijnet.hu/ekonto/control/szamla_select?vfw_coll=szamla_list&vfw_rowid={}&exp=K'.format(index)
+        self.browser.open(url)
+        self.browser.open('https://www.dijnet.hu/ekonto/control/szamla_letolt')
+        page = self.browser.get_current_page()
+        links = page.find_all('div', class_='xt_link_cell__download')
+        for link in links:
+            if 'Hiteles számla' in link.text or 'Terhelési összesítő és a hozzá tartozó számlák' in link.text:
+                download_link = self.browser.find_link(link_text=link.text)
+                if download_link:
+                    data = self.browser.session.get(self.browser.absolute_url(download_link['href']))
+                    header = data.headers['Content-Disposition']
+                    fname = header.split(';')[1].split('=')[1]
+                    with open(os.path.join(self.args.downloadpath, fname), "wb") as f:
+                        f.write(data.content)
+                    downloaded.append(fname)
+        self.browser.follow_link(page.select('a.xt_link__title')[0])
+        return downloaded
 
-try:
-    login()
-    list_invoices()
-except:
-    traceback.print_exc()
-finally:
-    logout()
+    def list_invoices(self):
+        self.browser.follow_link(link_text=u'Számlakeresés')
+        self.browser.select_form(nr=0)
+        if self.args.datefrom:
+            self.browser['datumtol'] = self.args.datefrom
+        if self.args.dateto:
+            self.browser['datumig'] = self.args.dateto
+        self.browser.submit_selected()
+        results = self.browser.get_current_page().find('table', class_='szamla_table').find_all('tr')
+        index = 0
+        for r in results:
+            downloaded = self.download_invoice(index)
+            index = index + 1
+            print('{};{}'.format(self.parse_row(r), '{}'.format(','.join(downloaded)) if len(downloaded)>0 else ''))
+
+def main(args):
+    dijnet = Dijnet(args)
+    try:
+        dijnet.login()
+        dijnet.list_invoices()
+    except:
+        traceback.print_exc()
+    finally:
+        dijnet.logout()
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(prog='python3 dijnet.py')
+    parser.add_argument('-f', '--from', help='datum -tol, pl.: "2021.01.01"', dest='datefrom')
+    parser.add_argument('-t', '--to', help='datum -ig, pl.: "2021.01.31"', dest='dateto')
+    parser.add_argument('-d', '--download', help='celmappa letolteshez', dest='downloadpath')
+    args = parser.parse_args()
+    main(args)
